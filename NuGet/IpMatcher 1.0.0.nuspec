@@ -7,14 +7,13 @@
     <authors>jchristn</authors>
     <owners>jchristn</owners>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
-    <licenseUrl>https://github.com/CloudGenix/sdk-csharp/blob/master/LICENSE.txt</licenseUrl>
+    <licenseUrl>https://github.com/jchristn/IpMatcher/blob/master/LICENSE.txt</licenseUrl>
     <projectUrl>https://github.com/jchristn/IpMatcher</projectUrl>
     <description>C# library for maintaining a match list of IP addresses and networks and comparing inputs to see if a match exists.</description>
     <summary>C# library for maintaining a match list of IP addresses and networks and comparing inputs to see if a match exists.</summary>
     <releaseNotes>Initial release</releaseNotes>
     <copyright>(c) 2018 Joel Christner</copyright>
     <tags>ip address match netmask subnet</tags>
-    <dependencies />
   </metadata>
   <files>
     <file src="lib\IpMatcher.dll" target="lib\IpMatcher.dll" />
