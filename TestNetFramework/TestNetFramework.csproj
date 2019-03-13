@@ -50,7 +50,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\IpMatcher\IpMatcher.csproj">
-      <Project>{51b92c33-ebcd-4bd7-9b07-cbf05ccdba48}</Project>
+      <Project>{c77c483c-d124-4a14-8b68-0eeb0e259d6b}</Project>
       <Name>IpMatcher</Name>
     </ProjectReference>
   </ItemGroup>

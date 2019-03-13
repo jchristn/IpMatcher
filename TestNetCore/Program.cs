@@ -5,7 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using IpMatcher;
 
-namespace Test
+namespace TestNetCore
 {
     public class Program
     {
@@ -15,7 +15,7 @@ namespace Test
         public static void Main(string[] args)
         {
             _Matcher = new Matcher();
-            
+
             while (_RunForever)
             {
                 Console.Write("Command [? for help] > ");
@@ -26,11 +26,11 @@ namespace Test
 
                 if (userInput.Equals("?"))
                 {
-                    Menu(); 
+                    Menu();
                 }
                 else if (userInput.Equals("q"))
                 {
-                    _RunForever = false; 
+                    _RunForever = false;
                 }
                 else if (userInput.StartsWith("add "))
                 {
