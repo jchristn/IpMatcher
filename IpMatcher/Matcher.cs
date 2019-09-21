@@ -193,7 +193,7 @@ namespace IpMatcher
 
         #region Private-Methods
 
-        public static bool ApplySubnetMask(IPAddress address, IPAddress mask, out IPAddress masked)
+        private static bool ApplySubnetMask(IPAddress address, IPAddress mask, out IPAddress masked)
         {
             masked = null;
             byte[] addrBytes = address.GetAddressBytes();

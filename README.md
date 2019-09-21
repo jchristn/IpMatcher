@@ -31,6 +31,4 @@ A lot of the internal matching code was adapted from: https://social.msdn.micros
 
 ## Version History
 
-v1.0.x
-- Retarget to support .NET Core 2.0 and .NET Framework 4.5.2
-- Initial release
+Refer to CHANGELOG.md
