@@ -1,5 +1,7 @@
 # IpMatcher
 
+[![NuGet Version](https://img.shields.io/nuget/v/IpMatcher.svg?style=flat)](https://www.nuget.org/packages/IpMatcher/) [![NuGet](https://img.shields.io/nuget/dt/IpMatcher.svg)](https://www.nuget.org/packages/IpMatcher) 
+
 C# library for maintaining a match list of IP addresses and networks and comparing inputs to see if a match exists.
 
 Effective v1.0.1, IpMatcher targets .NET Core 2.0 and .NET Framework 4.5.2.
