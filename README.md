@@ -11,7 +11,7 @@ Effective v1.0.1, IpMatcher targets .NET Core 2.0 and .NET Framework 4.5.2.
 Please file an issue for any bugs you encounter or requested features.  Want to contribute?  Please create a branch, commit, and submit a pull request!
 
 ## Usage
-```
+```csharp
 using IpMatcher;
 
 Matcher matcher = new Matcher();
