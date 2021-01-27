@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -16,16 +17,20 @@ namespace IpMatcher
     {
         #region Public-Members
 
+        /// <summary>
+        /// Method to invoke to send log messages.
+        /// </summary>
+        public Action<string> Logger = null;
+
         #endregion
 
         #region Private-Members
 
-        private readonly object _AddressLock;
-        private List<Address> _Addresses;
-
-        private readonly object _CacheLock;
-        private Dictionary<string, DateTime> _Cache;
-
+        private string _Header = "[IpMatcher] ";
+        private readonly object _AddressLock = new object();
+        private List<Address> _Addresses = new List<Address>();
+        private readonly object _CacheLock = new object();
+        private Dictionary<string, DateTime> _Cache = new Dictionary<string, DateTime>();
         private static readonly byte[] _ContiguousPatterns = { 0x80, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC, 0xFE, 0xFF };
 
         #endregion
@@ -36,11 +41,8 @@ namespace IpMatcher
         /// Instantiate the IP address matcher.
         /// </summary>
         public Matcher()
-        {
-            _AddressLock = new object();
-            _Addresses = new List<Address>();
-            _CacheLock = new object();
-            _Cache = new Dictionary<string, DateTime>();
+        { 
+
         }
 
         #endregion
@@ -57,15 +59,16 @@ namespace IpMatcher
             if (String.IsNullOrEmpty(ip)) throw new ArgumentNullException(nameof(ip));
             if (String.IsNullOrEmpty(netmask)) throw new ArgumentNullException(nameof(netmask));
 
-            IPAddress parsed = IPAddress.Parse(ip); // just to create exception
-            if (Exists(ip, netmask)) return;
+            string baseAddress = GetBaseIpAddress(ip, netmask);
+            IPAddress parsed = IPAddress.Parse(baseAddress);
+            if (Exists(baseAddress, netmask)) return;
 
             lock (_AddressLock)
             {
-                _Addresses.Add(new Address(ip, netmask));
+                _Addresses.Add(new Address(baseAddress, netmask));
             }
 
-            Debug.WriteLine(ip + " " + netmask + " added");
+            Log(baseAddress + " " + netmask + " added");
             return;
         }
 
@@ -84,7 +87,7 @@ namespace IpMatcher
             {
                 if (_Cache.ContainsKey(ip))
                 {
-                    Debug.WriteLine(ip + " " + netmask + " exists in cache");
+                    Log(ip + " " + netmask + " exists in cache");
                     return true;
                 }
             }
@@ -94,12 +97,12 @@ namespace IpMatcher
                 Address curr = _Addresses.Where(d => d.Ip.Equals(ip) && d.Netmask.Equals(netmask)).FirstOrDefault();
                 if (curr == default(Address))
                 {
-                    Debug.WriteLine(ip + " " + netmask + " does not exist in address list");
+                    Log(ip + " " + netmask + " does not exist in address list");
                     return false;
                 }
                 else
                 {
-                    Debug.WriteLine(ip + " " + netmask + " exists in address list");
+                    Log(ip + " " + netmask + " exists in address list");
                     return true;
                 }
             }
@@ -116,13 +119,13 @@ namespace IpMatcher
             lock (_CacheLock)
             {
                 _Cache = _Cache.Where(d => !d.Key.Equals(ip)).ToDictionary(d => d.Key, d => d.Value);
-                Debug.WriteLine(ip + " removed from cache");
+                Log(ip + " removed from cache");
             }
 
             lock (_AddressLock)
             {
                 _Addresses = _Addresses.Where(d => !d.Ip.Equals(ip)).ToList();
-                Debug.WriteLine(ip + " removed from address list");
+                Log(ip + " removed from address list");
             }
 
             return;
@@ -143,7 +146,7 @@ namespace IpMatcher
             {
                 if (_Cache.ContainsKey(ip))
                 {
-                    Debug.WriteLine(ip + " found in cache");
+                    Log(ip + " found in cache");
                     return true;
                 }
             }
@@ -155,7 +158,7 @@ namespace IpMatcher
                 Address directMatch = _Addresses.Where(d => d.Ip.Equals(ip) && d.Netmask.Equals("255.255.255.255")).FirstOrDefault();
                 if (directMatch != default(Address))
                 {
-                    Debug.WriteLine(ip + " found in address list");
+                    Log(ip + " found in address list");
                     return true;
                 }
 
@@ -167,19 +170,16 @@ namespace IpMatcher
             foreach (Address curr in networks)
             {
                 IPAddress maskedAddress;
-                if (!ApplySubnetMask(parsed, curr.ParsedNetmask, out maskedAddress))
-                {
-                    continue;
-                }
+                if (!ApplySubnetMask(parsed, curr.ParsedNetmask, out maskedAddress)) continue;
 
                 if (curr.ParsedAddress.Equals(maskedAddress))
                 {
-                    Debug.WriteLine(ip + " matched from address list");
+                    Log(ip + " matched from address list");
 
                     lock (_CacheLock)
                     {
                         if (!_Cache.ContainsKey(ip)) _Cache.Add(ip, DateTime.Now);
-                        Debug.WriteLine(ip + " added to cache");
+                        Log(ip + " added to cache");
                     }
 
                     return true;
@@ -189,11 +189,35 @@ namespace IpMatcher
             return false;
         }
 
+        /// <summary>
+        /// Retrieve all stored addresses.
+        /// </summary>
+        /// <returns></returns>
+        public List<string> All()
+        {
+            List<string> ret = new List<string>();
+
+            lock (_AddressLock)
+            {
+                foreach (Address addr in _Addresses)
+                {
+                    ret.Add(addr.Ip + "/" + addr.Netmask);
+                }
+            }
+
+            return ret;
+        }
+
         #endregion
 
         #region Private-Methods
 
-        private static bool ApplySubnetMask(IPAddress address, IPAddress mask, out IPAddress masked)
+        private void Log(string msg)
+        {
+            Logger?.Invoke(_Header + msg);
+        }
+
+        private bool ApplySubnetMask(IPAddress address, IPAddress mask, out IPAddress masked)
         {
             masked = null;
             byte[] addrBytes = address.GetAddressBytes();
@@ -209,7 +233,7 @@ namespace IpMatcher
             return true;
         }
 
-        private static bool ApplySubnetMask(byte[] value, byte[] mask, out byte[] masked)
+        private bool ApplySubnetMask(byte[] value, byte[] mask, out byte[] masked)
         {
             masked = new byte[value.Length];
             for (int i = 0; i < value.Length; i++) masked[i] = 0x00;
@@ -224,7 +248,7 @@ namespace IpMatcher
             return true;
         }
 
-        private static bool VerifyContiguousMask(byte[] mask)
+        private bool VerifyContiguousMask(byte[] mask)
         {
             int i;
 
@@ -268,19 +292,86 @@ namespace IpMatcher
             return true;
         }
 
+        private string GetBaseIpAddress(string ip, string netmask)
+        {
+            IPAddress ipAddr = IPAddress.Parse(ip);
+            IPAddress mask = IPAddress.Parse(netmask);
+
+            byte[] ipAddrBytes = ipAddr.GetAddressBytes();
+            byte[] maskBytes = mask.GetAddressBytes();
+
+            byte[] afterAnd = And(ipAddrBytes, maskBytes);
+            IPAddress baseAddr = new IPAddress(afterAnd);
+            return baseAddr.ToString();
+        }
+
+        private byte[] And(byte[] addr, byte[] mask)
+        {
+            if (addr.Length != mask.Length)
+                throw new ArgumentException("Supplied arrays are not of the same length.");
+             
+            BitArray baAddr = new BitArray(addr);
+            BitArray baMask = new BitArray(mask);
+            BitArray baResult = baAddr.And(baMask);
+            byte[] result = new byte[addr.Length];
+            baResult.CopyTo(result, 0);
+
+            /*
+            Console.WriteLine("Address : " + ByteArrayToHexString(addr));
+            Console.WriteLine("Netmask : " + ByteArrayToHexString(mask));
+            Console.WriteLine("Result  : " + ByteArrayToHexString(result));
+            */
+
+            return result;
+        }
+
+        private byte[] ExclusiveOr(byte[] addr, byte[] mask)
+        {
+            if (addr.Length != mask.Length)
+                throw new ArgumentException("Supplied arrays are not of the same length.");
+
+            /*
+            Console.WriteLine("Address: " + ByteArrayToHexString(addr));
+            Console.WriteLine("Netmask: " + ByteArrayToHexString(mask));
+            */
+
+            byte[] result = new byte[addr.Length];
+
+            for (int i = 0; i < addr.Length; ++i)
+                result[i] = (byte)(addr[i] ^ mask[i]);
+
+            BitArray baAddr = new BitArray(addr);
+            
+            return result;
+        }
+
+        private string ByteArrayToHexString(byte[] Bytes)
+        {
+            StringBuilder Result = new StringBuilder(Bytes.Length * 2);
+            string HexAlphabet = "0123456789ABCDEF";
+
+            foreach (byte B in Bytes)
+            {
+                Result.Append(HexAlphabet[(int)(B >> 4)]);
+                Result.Append(HexAlphabet[(int)(B & 0xF)]);
+            }
+
+            return Result.ToString();
+        }
+
         #endregion
 
         #region Private-Subordinate-Classes
 
         internal class Address
         {
-            public string GUID { get; set; }
-            public string Ip { get; set; }
-            public string Netmask { get; set; }
-            public IPAddress ParsedAddress { get; set; }
-            public IPAddress ParsedNetmask { get; set; }
+            internal string GUID { get; set; }
+            internal string Ip { get; set; }
+            internal string Netmask { get; set; }
+            internal IPAddress ParsedAddress { get; set; }
+            internal IPAddress ParsedNetmask { get; set; }
 
-            public Address(string ip, string netmask)
+            internal Address(string ip, string netmask)
             {
                 GUID = Guid.NewGuid().ToString();
                 Ip = ip;

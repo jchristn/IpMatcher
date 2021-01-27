@@ -5,7 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using IpMatcher;
 
-namespace TestNetCore
+namespace Test
 {
     public class Program
     {
@@ -15,6 +15,7 @@ namespace TestNetCore
         public static void Main(string[] args)
         {
             _Matcher = new Matcher();
+            _Matcher.Logger = Console.WriteLine;
 
             while (_RunForever)
             {
@@ -31,6 +32,18 @@ namespace TestNetCore
                 else if (userInput.Equals("q"))
                 {
                     _RunForever = false;
+                }
+                else if (userInput.Equals("all"))
+                {
+                    List<string> addresses = _Matcher.All();
+                    if (addresses != null && addresses.Count > 0)
+                    {
+                        foreach (string addr in addresses) Console.WriteLine("  " + addr);
+                    }
+                    else
+                    {
+                        Console.WriteLine("(none)");
+                    }
                 }
                 else if (userInput.StartsWith("add "))
                 {
@@ -81,15 +94,13 @@ namespace TestNetCore
         {
             Console.WriteLine("Commands:");
             Console.WriteLine("");
+            Console.WriteLine("  all                          retrieve all stored addresses and netmasks");
             Console.WriteLine("  add <network> <netmask>      add a network to the match list");
             Console.WriteLine("                               ex: add 192.168.1.0 255.255.255.0");
-            Console.WriteLine("");
             Console.WriteLine("  del <network>                remove a network from the match list");
             Console.WriteLine("                               ex: del 192.168.1.0");
-            Console.WriteLine("");
             Console.WriteLine("  exists <network> <netmask>   check if network exists in match list");
             Console.WriteLine("                               ex: exists 192.168.1.0 255.255.255.0");
-            Console.WriteLine("");
             Console.WriteLine("  match <address>              test if an address matches something");
             Console.WriteLine("                               ex: match 192.168.1.36");
             Console.WriteLine("");
