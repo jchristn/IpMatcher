@@ -59,6 +59,9 @@ namespace IpMatcher
             if (String.IsNullOrEmpty(ip)) throw new ArgumentNullException(nameof(ip));
             if (String.IsNullOrEmpty(netmask)) throw new ArgumentNullException(nameof(netmask));
 
+            ip = IPAddress.Parse(ip).ToString();
+            netmask = IPAddress.Parse(netmask).ToString();
+
             string baseAddress = GetBaseIpAddress(ip, netmask);
             IPAddress parsed = IPAddress.Parse(baseAddress);
             if (Exists(baseAddress, netmask)) return;
@@ -82,6 +85,9 @@ namespace IpMatcher
         {
             if (String.IsNullOrEmpty(ip)) throw new ArgumentNullException(nameof(ip));
             if (String.IsNullOrEmpty(netmask)) throw new ArgumentNullException(nameof(netmask));
+
+            ip = IPAddress.Parse(ip).ToString();
+            netmask = IPAddress.Parse(netmask).ToString();
 
             lock (_CacheLock)
             {
@@ -116,6 +122,8 @@ namespace IpMatcher
         {
             if (String.IsNullOrEmpty(ip)) throw new ArgumentNullException(nameof(ip));
 
+            ip = IPAddress.Parse(ip).ToString();
+
             lock (_CacheLock)
             {
                 _Cache = _Cache.Where(d => !d.Key.Equals(ip)).ToDictionary(d => d.Key, d => d.Value);
@@ -139,6 +147,8 @@ namespace IpMatcher
         public bool MatchExists(string ip)
         {
             if (String.IsNullOrEmpty(ip)) throw new ArgumentNullException(nameof(ip));
+
+            ip = IPAddress.Parse(ip).ToString();
 
             IPAddress parsed = IPAddress.Parse(ip);
 

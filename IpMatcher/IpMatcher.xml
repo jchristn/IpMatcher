@@ -9,6 +9,11 @@
             IP address matcher.
             </summary>
         </member>
+        <member name="F:IpMatcher.Matcher.Logger">
+            <summary>
+            Method to invoke to send log messages.
+            </summary>
+        </member>
         <member name="M:IpMatcher.Matcher.#ctor">
             <summary>
             Instantiate the IP address matcher.
@@ -41,6 +46,12 @@
             </summary>
             <param name="ip">The IP address, i.e. 192.168.1.34.</param>
             <returns>True if a match is found.</returns>
+        </member>
+        <member name="M:IpMatcher.Matcher.All">
+            <summary>
+            Retrieve all stored addresses.
+            </summary>
+            <returns></returns>
         </member>
     </members>
 </doc>
