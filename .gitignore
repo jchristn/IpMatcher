@@ -82,6 +82,9 @@ fabric.properties
 *.userosscache
 *.sln.docstates
 
+# Strong name key
+*.snk
+
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 
