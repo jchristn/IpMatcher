@@ -550,11 +550,28 @@ namespace Test.Shared
                     Check.True(m.Exists("2001:db8::", "ffff:ffff:ffff:ffff::"), "IPv6 entry exists");
                 }),
 
+                Case("IPv6", "HostNormalizedToBase", "An IPv6 host address is normalized to its base prefix", () =>
+                {
+                    Matcher m = new Matcher();
+                    m.Add("2001:db8::42", "ffff:ffff:ffff:ffff::"); // /64
+                    Check.True(m.Exists("2001:db8::", "ffff:ffff:ffff:ffff::"), "IPv6 host normalized to base prefix");
+                    Check.True(m.All().Contains("2001:db8::/ffff:ffff:ffff:ffff::"), "All() reflects normalized IPv6 prefix");
+                }),
+
                 Case("IPv6", "MatchInsidePrefix", "An IPv6 host inside the prefix matches", () =>
                 {
                     Matcher m = new Matcher();
                     m.Add("2001:db8::", "ffff:ffff:ffff:ffff::"); // /64
                     Check.True(m.MatchExists("2001:db8::1"), "host inside IPv6 /64 matches");
+                }),
+
+                Case("IPv6", "MatchPrefixBoundaries", "IPv6 /64 prefix boundaries match and adjacent prefixes do not", () =>
+                {
+                    Matcher m = new Matcher();
+                    m.Add("2001:db8::", "ffff:ffff:ffff:ffff::"); // /64
+                    Check.True(m.MatchExists("2001:db8::"), "bottom of IPv6 /64");
+                    Check.True(m.MatchExists("2001:db8::ffff:ffff:ffff:ffff"), "top of IPv6 /64");
+                    Check.False(m.MatchExists("2001:db8:0:1::"), "adjacent IPv6 /64 does not match");
                 }),
 
                 Case("IPv6", "MatchOutsidePrefixNoMatch", "An IPv6 host outside the prefix does not match", () =>
@@ -570,6 +587,13 @@ namespace Test.Shared
                     m.Add("2001:db8::1", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"); // /128
                     Check.True(m.MatchExists("2001:db8::1"), "exact IPv6 host matches");
                     Check.False(m.MatchExists("2001:db8::2"), "different IPv6 host does not match");
+                }),
+
+                Case("IPv6", "NonContiguousMaskNoMatch", "A non-contiguous IPv6 netmask never produces a match", () =>
+                {
+                    Matcher m = new Matcher();
+                    m.Add("2001:db8::", "ffff:0:ffff::");
+                    Check.False(m.MatchExists("2001:db8::1"), "non-contiguous IPv6 mask rejected");
                 }),
             };
 
@@ -607,6 +631,19 @@ namespace Test.Shared
                     Matcher m = new Matcher();
                     m.Add("203.0.113.7", "255.255.255.255"); // IPv4 /32 host
                     Check.False(m.MatchExists("2001:db8::7"), "IPv6 host must not match an IPv4 /32 entry");
+                }),
+
+                Case("CrossFamily", "AddIPv4WithIPv6MaskThrows", "Adding an IPv4 address with an IPv6 mask throws", () =>
+                    Check.Throws<ArgumentException>(() => new Matcher().Add("192.168.1.0", "ffff:ffff:ffff:ffff::"), "IPv4 address with IPv6 mask")),
+
+                Case("CrossFamily", "AddIPv6WithIPv4MaskThrows", "Adding an IPv6 address with an IPv4 mask throws", () =>
+                    Check.Throws<ArgumentException>(() => new Matcher().Add("2001:db8::", "255.255.255.0"), "IPv6 address with IPv4 mask")),
+
+                Case("CrossFamily", "ExistsWithMixedFamiliesReturnsFalse", "Exists returns false for mixed address and netmask families", () =>
+                {
+                    Matcher m = new Matcher();
+                    m.Add("192.168.1.0", "255.255.255.0");
+                    Check.False(m.Exists("192.168.1.0", "ffff:ffff:ffff:ffff::"), "IPv4 address with IPv6 netmask does not exist");
                 }),
 
                 Case("CrossFamily", "MixedFamiliesEachMatchesOwnFamily", "IPv4 and IPv6 entries coexist and each matches only its own family", () =>

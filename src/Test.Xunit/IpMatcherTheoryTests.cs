@@ -6,7 +6,6 @@ namespace Test.Xunit
     using Test.Shared;
     using Touchstone.Core;
     using global::Xunit;
-    using global::Xunit.Abstractions;
 
     /// <summary>
     /// Theory-driven xUnit host. Each non-skipped shared descriptor becomes an

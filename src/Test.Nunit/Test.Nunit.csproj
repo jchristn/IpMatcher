@@ -1,12 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <OutputType>Exe</OutputType>
     <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
     <IsPackable>false</IsPackable>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <Nullable>disable</Nullable>
     <LangVersion>latest</LangVersion>
     <RootNamespace>Test.Nunit</RootNamespace>
+    <EnableNUnitRunner>true</EnableNUnitRunner>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
   </PropertyGroup>
 
   <ItemGroup>
