@@ -38,6 +38,7 @@ namespace Test.Shared
                     AllSuite(),
                     LoggerSuite(),
                     IPv6Suite(),
+                    CrossFamilySuite(),
                 };
             }
         }
@@ -575,6 +576,54 @@ namespace Test.Shared
             return new TestSuiteDescriptor(
                 suiteId: "IPv6",
                 displayName: "IPv6 - address family support",
+                cases: cases);
+        }
+
+        /// <summary>
+        /// Cross-address-family behavior: an IPv4 query against an IPv6 network (and vice
+        /// versa) must return a graceful "no match" rather than throwing, and entries of
+        /// each family must only match hosts of the same family.
+        /// </summary>
+        public static TestSuiteDescriptor CrossFamilySuite()
+        {
+            List<TestCaseDescriptor> cases = new List<TestCaseDescriptor>
+            {
+                Case("CrossFamily", "IPv6QueryAgainstIPv4NetworkNoMatch", "An IPv6 host does not match an IPv4 network (and does not throw)", () =>
+                {
+                    Matcher m = new Matcher();
+                    m.Add("10.0.0.0", "255.0.0.0"); // IPv4 /8 network
+                    Check.False(m.MatchExists("2001:db8::1"), "IPv6 host must not match an IPv4 network");
+                }),
+
+                Case("CrossFamily", "IPv4QueryAgainstIPv6NetworkNoMatch", "An IPv4 host does not match an IPv6 network (and does not throw)", () =>
+                {
+                    Matcher m = new Matcher();
+                    m.Add("2001:db8::", "ffff:ffff:ffff:ffff::"); // IPv6 /64 network
+                    Check.False(m.MatchExists("192.168.1.1"), "IPv4 host must not match an IPv6 network");
+                }),
+
+                Case("CrossFamily", "IPv6QueryAgainstIPv4HostNoMatch", "An IPv6 host does not match an IPv4 /32 host entry", () =>
+                {
+                    Matcher m = new Matcher();
+                    m.Add("203.0.113.7", "255.255.255.255"); // IPv4 /32 host
+                    Check.False(m.MatchExists("2001:db8::7"), "IPv6 host must not match an IPv4 /32 entry");
+                }),
+
+                Case("CrossFamily", "MixedFamiliesEachMatchesOwnFamily", "IPv4 and IPv6 entries coexist and each matches only its own family", () =>
+                {
+                    Matcher m = new Matcher();
+                    m.Add("192.168.1.0", "255.255.255.0");        // IPv4 /24
+                    m.Add("2001:db8::", "ffff:ffff:ffff:ffff::"); // IPv6 /64
+                    Check.True(m.MatchExists("192.168.1.42"), "IPv4 host matches the IPv4 network");
+                    Check.True(m.MatchExists("2001:db8::42"), "IPv6 host matches the IPv6 network");
+                    Check.False(m.MatchExists("2001:db9::42"), "IPv6 host outside the IPv6 network does not match");
+                    Check.False(m.MatchExists("192.168.2.42"), "IPv4 host outside the IPv4 network does not match");
+                }),
+            };
+
+            return new TestSuiteDescriptor(
+                suiteId: "CrossFamily",
+                displayName: "CrossFamily - IPv4/IPv6 isolation and safety",
                 cases: cases);
         }
 

@@ -248,6 +248,11 @@ namespace IpMatcher
             masked = new byte[value.Length];
             for (int i = 0; i < value.Length; i++) masked[i] = 0x00;
 
+            // Address and mask must share the same address family (i.e. byte length).
+            // A cross-family comparison (e.g. an IPv6 address against an IPv4 mask) can
+            // never match and must not index past the shorter array.
+            if (value.Length != mask.Length) return false;
+
             if (!VerifyContiguousMask(mask)) return false;
 
             for (int i = 0; i < masked.Length; ++i)
