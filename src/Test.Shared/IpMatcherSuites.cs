@@ -16,7 +16,8 @@ namespace Test.Shared
     ///   - Test.Nunit     (Touchstone NUnit adapter)
     ///
     /// Cases exercise the full public surface of <see cref="Matcher"/>
-    /// (Add, Exists, Remove, MatchExists, All, Logger) across positive and
+    /// (Add, Exists, Remove, MatchExists, All, Logger, CacheCapacity, CacheCount,
+    /// Dispose) across positive and
     /// negative scenarios, including argument validation, normalization,
     /// subnet-boundary behavior, cache behavior, non-contiguous masks, and IPv6.
     /// </summary>
@@ -39,6 +40,7 @@ namespace Test.Shared
                     LoggerSuite(),
                     IPv6Suite(),
                     CrossFamilySuite(),
+                    CacheSuite(),
                 };
             }
         }
@@ -147,7 +149,7 @@ namespace Test.Shared
 
         /// <summary>
         /// Behavior of <see cref="Matcher.Exists(string, string)"/>: exact matching,
-        /// normalization, cache short-circuit, and argument validation.
+        /// normalization, isolation from the match cache, and argument validation.
         /// </summary>
         public static TestSuiteDescriptor ExistsSuite()
         {
@@ -180,13 +182,13 @@ namespace Test.Shared
                     Check.False(m.Exists("192.168.1.0", "255.255.255.0"), "empty matcher has no entries");
                 }),
 
-                Case("Exists", "CacheShortCircuit", "Exists returns true from cache regardless of netmask after a match", () =>
+                Case("Exists", "IgnoresMatchCache", "Exists reports only added entries, never addresses held in the match cache", () =>
                 {
                     Matcher m = new Matcher();
                     m.Add("192.168.5.0", "255.255.255.0");
                     Check.True(m.MatchExists("192.168.5.20"), "match populates cache");
-                    // The cache is keyed only by IP; Exists short-circuits on a cache hit.
-                    Check.True(m.Exists("192.168.5.20", "255.255.255.255"), "cached IP reported as existing regardless of mask");
+                    Check.False(m.Exists("192.168.5.20", "255.255.255.255"), "a cached match is not an entry");
+                    Check.True(m.Exists("192.168.5.0", "255.255.255.0"), "the covering entry still exists");
                 }),
 
                 // Argument validation (negative)
@@ -278,7 +280,7 @@ namespace Test.Shared
                     Matcher m = new Matcher();
                     m.Add("192.168.5.0", "255.255.255.0");
                     m.MatchExists("192.168.5.20"); // caches the host address
-                    m.Remove("192.168.5.20");      // removes cache entry, not the network entry
+                    m.Remove("192.168.5.20");      // no such entry; clears the cache, not the network entry
                     Check.Equal(1, m.All().Count, "network entry remains");
                     Check.True(m.MatchExists("192.168.5.20"), "host still matches via the network");
                 }),
@@ -661,6 +663,198 @@ namespace Test.Shared
             return new TestSuiteDescriptor(
                 suiteId: "CrossFamily",
                 displayName: "CrossFamily - IPv4/IPv6 isolation and safety",
+                cases: cases);
+        }
+
+        /// <summary>
+        /// Behavior of the bounded match cache: capacity limit and eviction,
+        /// disabling, invalidation on removal, reconfiguration, disposal, and concurrency.
+        /// </summary>
+        public static TestSuiteDescriptor CacheSuite()
+        {
+            List<TestCaseDescriptor> cases = new List<TestCaseDescriptor>
+            {
+                Case("Cache", "DefaultCapacity", "Default cache capacity is 4096", () =>
+                {
+                    using (Matcher m = new Matcher())
+                    {
+                        Check.Equal(4096, m.CacheCapacity, "default capacity");
+                        Check.Equal(0, m.CacheCount, "cache starts empty");
+                    }
+                }),
+
+                Case("Cache", "SubnetMatchIsCached", "A subnet match is stored in the cache", () =>
+                {
+                    using (Matcher m = new Matcher())
+                    {
+                        m.Add("10.0.0.0", "255.0.0.0");
+                        Check.True(m.MatchExists("10.1.2.3"), "subnet match");
+                        Check.Equal(1, m.CacheCount, "match cached");
+                        Check.True(m.MatchExists("10.1.2.3"), "repeat match");
+                        Check.Equal(1, m.CacheCount, "repeat match does not duplicate");
+                    }
+                }),
+
+                Case("Cache", "MissesAndExactMatchesAreNotCached", "Misses and exact /32 matches do not populate the cache", () =>
+                {
+                    using (Matcher m = new Matcher())
+                    {
+                        m.Add("203.0.113.7", "255.255.255.255");
+                        m.Add("10.0.0.0", "255.0.0.0");
+                        Check.True(m.MatchExists("203.0.113.7"), "exact match");
+                        Check.False(m.MatchExists("192.0.2.1"), "miss");
+                        Check.Equal(0, m.CacheCount, "nothing cached");
+                    }
+                }),
+
+                Case("Cache", "BoundedByCapacity", "Cache size never exceeds capacity under many distinct matches", () =>
+                {
+                    using (Matcher m = new Matcher(100))
+                    {
+                        m.Add("10.0.0.0", "255.0.0.0");
+                        for (int i = 0; i < 5000; i++)
+                        {
+                            string ip = "10." + ((i >> 16) & 0xFF) + "." + ((i >> 8) & 0xFF) + "." + (i & 0xFF);
+                            Check.True(m.MatchExists(ip), "every address in the /8 matches");
+                            Check.True(m.CacheCount <= 100, "cache count within capacity");
+                        }
+
+                        Check.True(m.CacheCount > 0, "cache in use");
+                        Check.True(m.MatchExists("10.0.0.1"), "evicted address still matches via the address list");
+                    }
+                }),
+
+                Case("Cache", "IPv6BoundedByCapacity", "IPv6 matches are bounded by capacity", () =>
+                {
+                    using (Matcher m = new Matcher(10))
+                    {
+                        m.Add("2001:db8::", "ffff:ffff:ffff:ffff::");
+                        for (int i = 1; i <= 200; i++)
+                        {
+                            Check.True(m.MatchExists("2001:db8::" + i.ToString("x")), "address in /64 matches");
+                        }
+
+                        Check.True(m.CacheCount <= 10, "cache count within capacity");
+                    }
+                }),
+
+                Case("Cache", "ZeroCapacityDisablesCache", "Capacity 0 disables caching but matching still works", () =>
+                {
+                    using (Matcher m = new Matcher(0))
+                    {
+                        m.Add("10.0.0.0", "255.0.0.0");
+                        Check.True(m.MatchExists("10.1.2.3"), "match without cache");
+                        Check.True(m.MatchExists("10.1.2.3"), "repeat match without cache");
+                        Check.Equal(0, m.CacheCount, "nothing cached");
+                    }
+                }),
+
+                Case("Cache", "NegativeCapacityThrows", "Negative capacity throws ArgumentOutOfRangeException", () =>
+                {
+                    Check.Throws<ArgumentOutOfRangeException>(() => new Matcher(-1), "constructor");
+                    using (Matcher m = new Matcher())
+                    {
+                        Check.Throws<ArgumentOutOfRangeException>(() => m.CacheCapacity = -1, "property");
+                        Check.Equal(4096, m.CacheCapacity, "capacity unchanged after rejected value");
+                    }
+                }),
+
+                Case("Cache", "ChangingCapacityClearsCache", "Changing capacity discards cached entries and applies the new bound", () =>
+                {
+                    using (Matcher m = new Matcher())
+                    {
+                        m.Add("10.0.0.0", "255.0.0.0");
+                        for (int i = 1; i <= 50; i++) m.MatchExists("10.0.0." + i);
+                        Check.Equal(50, m.CacheCount, "50 cached");
+                        m.CacheCapacity = 5;
+                        Check.Equal(0, m.CacheCount, "cache cleared");
+                        for (int i = 1; i <= 50; i++) m.MatchExists("10.0.0." + i);
+                        Check.True(m.CacheCount <= 5, "new capacity enforced");
+                    }
+                }),
+
+                Case("Cache", "RemoveNetworkInvalidatesCachedHosts", "Removing a network stops previously cached hosts from matching", () =>
+                {
+                    using (Matcher m = new Matcher())
+                    {
+                        m.Add("192.168.5.0", "255.255.255.0");
+                        Check.True(m.MatchExists("192.168.5.20"), "host matches and is cached");
+                        m.Remove("192.168.5.0");
+                        Check.Equal(0, m.CacheCount, "cache cleared on removal");
+                        Check.False(m.MatchExists("192.168.5.20"), "cached host no longer matches");
+                    }
+                }),
+
+                Case("Cache", "AddAfterMatchOfBaseAddress", "A cached match of a base address does not block adding a narrower entry", () =>
+                {
+                    using (Matcher m = new Matcher())
+                    {
+                        m.Add("10.0.0.0", "255.0.0.0");
+                        Check.True(m.MatchExists("10.0.0.0"), "base address matches the /8 and is cached");
+                        m.Add("10.0.0.0", "255.255.0.0");
+                        Check.Equal(2, m.All().Count, "/16 entry added");
+                        m.Remove("10.0.0.0");
+                        Check.Equal(0, m.All().Count, "both entries removed");
+                    }
+                }),
+
+                Case("Cache", "DisposeIsIdempotentAndMatchingContinues", "Dispose can be called repeatedly and matching still works uncached", () =>
+                {
+                    Matcher m = new Matcher();
+                    m.Add("10.0.0.0", "255.0.0.0");
+                    Check.True(m.MatchExists("10.1.2.3"), "match before dispose");
+                    m.Dispose();
+                    m.Dispose();
+                    Check.Equal(0, m.CacheCount, "cache released");
+                    Check.True(m.MatchExists("10.1.2.3"), "match after dispose");
+                    Check.False(m.MatchExists("192.0.2.1"), "miss after dispose");
+                    Check.Equal(0, m.CacheCount, "no cache after dispose");
+                    m.Remove("10.0.0.0");
+                    Check.False(m.MatchExists("10.1.2.3"), "removal after dispose");
+                }),
+
+                Case("Cache", "DisposeWithoutUse", "Disposing a matcher whose cache was never created does not throw", () =>
+                {
+                    Matcher m = new Matcher();
+                    m.Dispose();
+                    Check.Equal(0, m.CacheCount, "no cache");
+                }),
+
+                Case("Cache", "ConcurrentMatchAndRemove", "Concurrent matches, removals, and capacity changes stay bounded and do not throw", () =>
+                {
+                    using (Matcher m = new Matcher(64))
+                    {
+                        m.Add("10.0.0.0", "255.0.0.0");
+                        List<Task> tasks = new List<Task>();
+                        for (int t = 0; t < 8; t++)
+                        {
+                            int seed = t;
+                            tasks.Add(Task.Run(() =>
+                            {
+                                for (int i = 0; i < 2000; i++)
+                                {
+                                    m.MatchExists("10." + seed + "." + ((i >> 8) & 0xFF) + "." + (i & 0xFF));
+                                    if (i % 500 == 0) m.Remove("172.16.0.0");
+                                    if (seed == 0 && i % 700 == 0) m.CacheCapacity = 64;
+                                }
+                            }));
+                        }
+
+                        Task.WaitAll(tasks.ToArray());
+                        Check.True(m.CacheCount <= 64, "cache count within capacity");
+                        Check.True(m.MatchExists("10.200.0.1"), "matching intact");
+                    }
+                }),
+
+                Case("Cache", "CacheNameIsStable", "The cache telemetry name is a stable constant", () =>
+                {
+                    Check.Equal("ipmatcher", Matcher.CacheName, "cache name");
+                }),
+            };
+
+            return new TestSuiteDescriptor(
+                suiteId: "Cache",
+                displayName: "Cache - bounded LRU match cache",
                 cases: cases);
         }
 

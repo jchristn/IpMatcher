@@ -1,19 +1,19 @@
-﻿using System;
-using System.Collections;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
-using System.Net;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace IpMatcher
+﻿namespace IpMatcher
 {
+    using System;
+    using System.Collections;
+    using System.Collections.Generic;
+    using System.Linq;
+    using System.Net;
+    using System.Text;
+    using Caching;
+
     /// <summary>
     /// IP address matcher.
+    /// Thread safe: all public members may be called concurrently from multiple threads.
+    /// Dispose the matcher when it is no longer needed to release its match cache and the cache's background expiration task.
     /// </summary>
-    public class Matcher
+    public class Matcher : IDisposable
     {
         #region Public-Members
 
@@ -21,6 +21,62 @@ namespace IpMatcher
         /// Method to invoke to send log messages.
         /// </summary>
         public Action<string> Logger = null;
+
+        /// <summary>
+        /// Maximum number of matched IP addresses held in the match cache.
+        /// The cache uses least-recently-used eviction, so memory stays bounded regardless of how many distinct addresses are matched.
+        /// Default is 4096.  Minimum is 0, which disables the match cache.  There is no maximum.
+        /// Changing the value discards any cached entries.
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when the value is less than 0.</exception>
+        public int CacheCapacity
+        {
+            get
+            {
+                return _CacheCapacity;
+            }
+            set
+            {
+                if (value < 0) throw new ArgumentOutOfRangeException(nameof(CacheCapacity), "Cache capacity must be zero or greater.");
+
+                LRUCache<string, DateTime> previous = null;
+
+                lock (_CacheLock)
+                {
+                    _CacheCapacity = value;
+                    previous = _Cache;
+                    _Cache = null;
+                }
+
+                DisposeCache(previous);
+            }
+        }
+
+        /// <summary>
+        /// Number of matched IP addresses currently held in the match cache.  Never exceeds <see cref="CacheCapacity"/>.
+        /// </summary>
+        public int CacheCount
+        {
+            get
+            {
+                LRUCache<string, DateTime> cache = GetCache(false);
+                if (cache == null) return 0;
+
+                try
+                {
+                    return cache.Count();
+                }
+                catch (ObjectDisposedException)
+                {
+                    return 0;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Name of the match cache, reported as the cache.name label by the Caching library's telemetry (meter and activity source "Caching").
+        /// </summary>
+        public static readonly string CacheName = "ipmatcher";
 
         #endregion
 
@@ -30,7 +86,9 @@ namespace IpMatcher
         private readonly object _AddressLock = new object();
         private List<Address> _Addresses = new List<Address>();
         private readonly object _CacheLock = new object();
-        private Dictionary<string, DateTime> _Cache = new Dictionary<string, DateTime>();
+        private LRUCache<string, DateTime> _Cache = null;
+        private int _CacheCapacity = 4096;
+        private bool _Disposed = false;
         private static readonly byte[] _ContiguousPatterns = { 0x80, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC, 0xFE, 0xFF };
 
         #endregion
@@ -38,11 +96,21 @@ namespace IpMatcher
         #region Constructors-and-Factories
 
         /// <summary>
-        /// Instantiate the IP address matcher.
+        /// Instantiate the IP address matcher with the default match cache capacity (4096).
         /// </summary>
         public Matcher()
-        { 
+        {
 
+        }
+
+        /// <summary>
+        /// Instantiate the IP address matcher.
+        /// </summary>
+        /// <param name="cacheCapacity">Maximum number of matched IP addresses held in the match cache.  Minimum 0 (disables the cache).</param>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when cacheCapacity is less than 0.</exception>
+        public Matcher(int cacheCapacity)
+        {
+            CacheCapacity = cacheCapacity;
         }
 
         #endregion
@@ -54,6 +122,9 @@ namespace IpMatcher
         /// </summary>
         /// <param name="ip">The IP address, i.e. 192.168.1.0.</param>
         /// <param name="netmask">The netmask, i.e. 255.255.255.0.</param>
+        /// <exception cref="ArgumentNullException">Thrown when ip or netmask is null or empty.</exception>
+        /// <exception cref="FormatException">Thrown when ip or netmask is not a valid IP address.</exception>
+        /// <exception cref="ArgumentException">Thrown when ip and netmask belong to different address families.</exception>
         public void Add(string ip, string netmask)
         {
             if (String.IsNullOrEmpty(ip)) throw new ArgumentNullException(nameof(ip));
@@ -63,7 +134,6 @@ namespace IpMatcher
             netmask = IPAddress.Parse(netmask).ToString();
 
             string baseAddress = GetBaseIpAddress(ip, netmask);
-            IPAddress parsed = IPAddress.Parse(baseAddress);
             if (Exists(baseAddress, netmask)) return;
 
             lock (_AddressLock)
@@ -77,10 +147,13 @@ namespace IpMatcher
 
         /// <summary>
         /// Check if an entry exists in the match list.
+        /// Only entries added with <see cref="Add(string, string)"/> are considered; the match cache is not consulted.
         /// </summary>
         /// <param name="ip">The IP address, i.e. 192.168.1.0.</param>
         /// <param name="netmask">The netmask, i.e. 255.255.255.0.</param>
         /// <returns>True if entry exists.</returns>
+        /// <exception cref="ArgumentNullException">Thrown when ip or netmask is null or empty.</exception>
+        /// <exception cref="FormatException">Thrown when ip or netmask is not a valid IP address.</exception>
         public bool Exists(string ip, string netmask)
         {
             if (String.IsNullOrEmpty(ip)) throw new ArgumentNullException(nameof(ip));
@@ -88,15 +161,6 @@ namespace IpMatcher
 
             ip = IPAddress.Parse(ip).ToString();
             netmask = IPAddress.Parse(netmask).ToString();
-
-            lock (_CacheLock)
-            {
-                if (_Cache.ContainsKey(ip))
-                {
-                    Log(ip + " " + netmask + " exists in cache");
-                    return true;
-                }
-            }
 
             lock (_AddressLock)
             {
@@ -116,24 +180,26 @@ namespace IpMatcher
 
         /// <summary>
         /// Remove an entry from the match list.
+        /// The match cache is cleared so that no address previously matched through a removed entry continues to match.
         /// </summary>
         /// <param name="ip">The IP address, i.e 192.168.1.0.</param>
+        /// <exception cref="ArgumentNullException">Thrown when ip is null or empty.</exception>
+        /// <exception cref="FormatException">Thrown when ip is not a valid IP address.</exception>
         public void Remove(string ip)
         {
             if (String.IsNullOrEmpty(ip)) throw new ArgumentNullException(nameof(ip));
 
             ip = IPAddress.Parse(ip).ToString();
 
-            lock (_CacheLock)
-            {
-                _Cache = _Cache.Where(d => !d.Key.Equals(ip)).ToDictionary(d => d.Key, d => d.Value);
-                Log(ip + " removed from cache");
-            }
-
             lock (_AddressLock)
             {
                 _Addresses = _Addresses.Where(d => !d.Ip.Equals(ip)).ToList();
                 Log(ip + " removed from address list");
+
+                // Cleared while holding the address lock so a concurrent match cannot re-cache an address
+                // through the entry being removed after the cache has been cleared.
+                ClearCache();
+                Log("cache cleared");
             }
 
             return;
@@ -141,27 +207,24 @@ namespace IpMatcher
 
         /// <summary>
         /// Check if an IP address matches something in the match list.
+        /// Successful subnet matches are stored in a bounded least-recently-used cache (see <see cref="CacheCapacity"/>).
         /// </summary>
         /// <param name="ip">The IP address, i.e. 192.168.1.34.</param>
         /// <returns>True if a match is found.</returns>
+        /// <exception cref="ArgumentNullException">Thrown when ip is null or empty.</exception>
+        /// <exception cref="FormatException">Thrown when ip is not a valid IP address.</exception>
         public bool MatchExists(string ip)
         {
             if (String.IsNullOrEmpty(ip)) throw new ArgumentNullException(nameof(ip));
 
-            ip = IPAddress.Parse(ip).ToString();
-
             IPAddress parsed = IPAddress.Parse(ip);
+            ip = parsed.ToString();
 
-            lock (_CacheLock)
+            if (CacheContains(ip))
             {
-                if (_Cache.ContainsKey(ip))
-                {
-                    Log(ip + " found in cache");
-                    return true;
-                }
+                Log(ip + " found in cache");
+                return true;
             }
-
-            List<Address> networks = new List<Address>();
 
             lock (_AddressLock)
             {
@@ -172,27 +235,19 @@ namespace IpMatcher
                     return true;
                 }
 
-                networks = _Addresses.Where(d => !d.Netmask.Equals("255.255.255.255")).ToList();
-            }
-
-            if (networks.Count < 1) return false;
-
-            foreach (Address curr in networks)
-            {
-                IPAddress maskedAddress;
-                if (!ApplySubnetMask(parsed, curr.ParsedNetmask, out maskedAddress)) continue;
-
-                if (curr.ParsedAddress.Equals(maskedAddress))
+                foreach (Address curr in _Addresses)
                 {
-                    Log(ip + " matched from address list");
+                    if (curr.Netmask.Equals("255.255.255.255")) continue;
 
-                    lock (_CacheLock)
+                    IPAddress maskedAddress;
+                    if (!ApplySubnetMask(parsed, curr.ParsedNetmask, out maskedAddress)) continue;
+
+                    if (curr.ParsedAddress.Equals(maskedAddress))
                     {
-                        if (!_Cache.ContainsKey(ip)) _Cache.Add(ip, DateTime.Now);
-                        Log(ip + " added to cache");
+                        Log(ip + " matched from address list");
+                        if (CacheAdd(ip)) Log(ip + " added to cache");
+                        return true;
                     }
-
-                    return true;
                 }
             }
 
@@ -202,7 +257,7 @@ namespace IpMatcher
         /// <summary>
         /// Retrieve all stored addresses.
         /// </summary>
-        /// <returns></returns>
+        /// <returns>List of entries in the form address/netmask.</returns>
         public List<string> All()
         {
             List<string> ret = new List<string>();
@@ -218,6 +273,41 @@ namespace IpMatcher
             return ret;
         }
 
+        /// <summary>
+        /// Dispose of the matcher, releasing the match cache and its background expiration task.
+        /// Matching continues to work after disposal, without caching.
+        /// </summary>
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        #endregion
+
+        #region Protected-Methods
+
+        /// <summary>
+        /// Dispose of the matcher.
+        /// </summary>
+        /// <param name="disposing">True when called from <see cref="Dispose()"/>.</param>
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!disposing) return;
+
+            LRUCache<string, DateTime> previous = null;
+
+            lock (_CacheLock)
+            {
+                if (_Disposed) return;
+                _Disposed = true;
+                previous = _Cache;
+                _Cache = null;
+            }
+
+            DisposeCache(previous);
+        }
+
         #endregion
 
         #region Private-Methods
@@ -225,6 +315,78 @@ namespace IpMatcher
         private void Log(string msg)
         {
             Logger?.Invoke(_Header + msg);
+        }
+
+        private LRUCache<string, DateTime> GetCache(bool create)
+        {
+            lock (_CacheLock)
+            {
+                if (_Cache == null && create && !_Disposed && _CacheCapacity > 0)
+                {
+                    // Created on first use: a matcher that never produces a subnet match never starts the cache's expiration task.
+                    _Cache = new LRUCache<string, DateTime>(_CacheCapacity, Math.Max(1, _CacheCapacity / 10));
+                    _Cache.Name = CacheName;
+                }
+
+                return _Cache;
+            }
+        }
+
+        private bool CacheContains(string ip)
+        {
+            LRUCache<string, DateTime> cache = GetCache(false);
+            if (cache == null) return false;
+
+            try
+            {
+                return cache.TryGet(ip, out DateTime _);
+            }
+            catch (ObjectDisposedException)
+            {
+                return false;
+            }
+        }
+
+        private bool CacheAdd(string ip)
+        {
+            LRUCache<string, DateTime> cache = GetCache(true);
+            if (cache == null) return false;
+
+            try
+            {
+                return cache.TryAddReplace(ip, DateTime.UtcNow);
+            }
+            catch (ObjectDisposedException)
+            {
+                return false;
+            }
+        }
+
+        private void ClearCache()
+        {
+            LRUCache<string, DateTime> cache = GetCache(false);
+            if (cache == null) return;
+
+            try
+            {
+                cache.Clear();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        private void DisposeCache(LRUCache<string, DateTime> cache)
+        {
+            if (cache == null) return;
+
+            try
+            {
+                cache.Dispose();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
         }
 
         private bool ApplySubnetMask(IPAddress address, IPAddress mask, out IPAddress masked)

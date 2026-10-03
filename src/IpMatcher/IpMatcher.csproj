@@ -5,7 +5,7 @@
 		<GeneratePackageOnBuild>true</GeneratePackageOnBuild>
 		<IncludeSymbols>true</IncludeSymbols>
 		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
-		<Version>1.0.6</Version>
+		<Version>1.1.0</Version>
 		<Authors>Joel Christner</Authors>
 		<Description>Library for maintaining a match list of IP addresses and networks and comparing inputs to see if a match exists.</Description>
 		<Copyright>(c)2025 Joel Christner</Copyright>
@@ -13,7 +13,7 @@
 		<RepositoryUrl>https://github.com/jchristn/ipmatcher</RepositoryUrl>
 		<RepositoryType>Github</RepositoryType>
 		<PackageLicenseUrl></PackageLicenseUrl>
-		<PackageReleaseNotes>Fix cross-address-family lookups (an IPv4/IPv6 mismatch no longer throws; it now returns no match). Emit symbol package (snupkg).</PackageReleaseNotes>
+		<PackageReleaseNotes>Bound the match cache with a least-recently-used cache from the Caching package (CacheCapacity, default 4096; 0 disables). Remove now clears the cache so hosts matched through a removed network stop matching. Exists no longer reports cached matches as entries. Matcher implements IDisposable.</PackageReleaseNotes>
 		<PackageTags>ip address match netmask network mask subnet cidr</PackageTags>
 		<PackageLicenseFile>LICENSE.md</PackageLicenseFile>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -41,6 +41,10 @@
 			<Pack>True</Pack>
 			<PackagePath></PackagePath>
 		</None>
+	</ItemGroup>
+
+	<ItemGroup>
+	  <PackageReference Include="Caching" Version="5.1.2" />
 	</ItemGroup>
 
 </Project>

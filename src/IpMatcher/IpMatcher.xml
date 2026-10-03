@@ -7,6 +7,8 @@
         <member name="T:IpMatcher.Matcher">
             <summary>
             IP address matcher.
+            Thread safe: all public members may be called concurrently from multiple threads.
+            Dispose the matcher when it is no longer needed to release its match cache and the cache's background expiration task.
             </summary>
         </member>
         <member name="F:IpMatcher.Matcher.Logger">
@@ -14,10 +16,36 @@
             Method to invoke to send log messages.
             </summary>
         </member>
+        <member name="P:IpMatcher.Matcher.CacheCapacity">
+            <summary>
+            Maximum number of matched IP addresses held in the match cache.
+            The cache uses least-recently-used eviction, so memory stays bounded regardless of how many distinct addresses are matched.
+            Default is 4096.  Minimum is 0, which disables the match cache.  There is no maximum.
+            Changing the value discards any cached entries.
+            </summary>
+            <exception cref="T:System.ArgumentOutOfRangeException">Thrown when the value is less than 0.</exception>
+        </member>
+        <member name="P:IpMatcher.Matcher.CacheCount">
+            <summary>
+            Number of matched IP addresses currently held in the match cache.  Never exceeds <see cref="P:IpMatcher.Matcher.CacheCapacity"/>.
+            </summary>
+        </member>
+        <member name="F:IpMatcher.Matcher.CacheName">
+            <summary>
+            Name of the match cache, reported as the cache.name label by the Caching library's telemetry (meter and activity source "Caching").
+            </summary>
+        </member>
         <member name="M:IpMatcher.Matcher.#ctor">
+            <summary>
+            Instantiate the IP address matcher with the default match cache capacity (4096).
+            </summary>
+        </member>
+        <member name="M:IpMatcher.Matcher.#ctor(System.Int32)">
             <summary>
             Instantiate the IP address matcher.
             </summary>
+            <param name="cacheCapacity">Maximum number of matched IP addresses held in the match cache.  Minimum 0 (disables the cache).</param>
+            <exception cref="T:System.ArgumentOutOfRangeException">Thrown when cacheCapacity is less than 0.</exception>
         </member>
         <member name="M:IpMatcher.Matcher.Add(System.String,System.String)">
             <summary>
@@ -25,33 +53,57 @@
             </summary>
             <param name="ip">The IP address, i.e. 192.168.1.0.</param>
             <param name="netmask">The netmask, i.e. 255.255.255.0.</param>
+            <exception cref="T:System.ArgumentNullException">Thrown when ip or netmask is null or empty.</exception>
+            <exception cref="T:System.FormatException">Thrown when ip or netmask is not a valid IP address.</exception>
+            <exception cref="T:System.ArgumentException">Thrown when ip and netmask belong to different address families.</exception>
         </member>
         <member name="M:IpMatcher.Matcher.Exists(System.String,System.String)">
             <summary>
             Check if an entry exists in the match list.
+            Only entries added with <see cref="M:IpMatcher.Matcher.Add(System.String,System.String)"/> are considered; the match cache is not consulted.
             </summary>
             <param name="ip">The IP address, i.e. 192.168.1.0.</param>
             <param name="netmask">The netmask, i.e. 255.255.255.0.</param>
             <returns>True if entry exists.</returns>
+            <exception cref="T:System.ArgumentNullException">Thrown when ip or netmask is null or empty.</exception>
+            <exception cref="T:System.FormatException">Thrown when ip or netmask is not a valid IP address.</exception>
         </member>
         <member name="M:IpMatcher.Matcher.Remove(System.String)">
             <summary>
             Remove an entry from the match list.
+            The match cache is cleared so that no address previously matched through a removed entry continues to match.
             </summary>
             <param name="ip">The IP address, i.e 192.168.1.0.</param>
+            <exception cref="T:System.ArgumentNullException">Thrown when ip is null or empty.</exception>
+            <exception cref="T:System.FormatException">Thrown when ip is not a valid IP address.</exception>
         </member>
         <member name="M:IpMatcher.Matcher.MatchExists(System.String)">
             <summary>
             Check if an IP address matches something in the match list.
+            Successful subnet matches are stored in a bounded least-recently-used cache (see <see cref="P:IpMatcher.Matcher.CacheCapacity"/>).
             </summary>
             <param name="ip">The IP address, i.e. 192.168.1.34.</param>
             <returns>True if a match is found.</returns>
+            <exception cref="T:System.ArgumentNullException">Thrown when ip is null or empty.</exception>
+            <exception cref="T:System.FormatException">Thrown when ip is not a valid IP address.</exception>
         </member>
         <member name="M:IpMatcher.Matcher.All">
             <summary>
             Retrieve all stored addresses.
             </summary>
-            <returns></returns>
+            <returns>List of entries in the form address/netmask.</returns>
+        </member>
+        <member name="M:IpMatcher.Matcher.Dispose">
+            <summary>
+            Dispose of the matcher, releasing the match cache and its background expiration task.
+            Matching continues to work after disposal, without caching.
+            </summary>
+        </member>
+        <member name="M:IpMatcher.Matcher.Dispose(System.Boolean)">
+            <summary>
+            Dispose of the matcher.
+            </summary>
+            <param name="disposing">True when called from <see cref="M:IpMatcher.Matcher.Dispose"/>.</param>
         </member>
     </members>
 </doc>
